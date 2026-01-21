@@ -33,14 +33,13 @@ const App: React.FC = () => {
     const [terrain, setTerrain] = useState<W3E | null>(null);
     const [selectedTexture, setSelectedTexture] = useState<number>(0);
     const [brushSize, setBrushSize] = useState<number>(1);
-    const [loading, setLoading] = useState(false);
     const [statusMsg, setStatusMsg] = useState<{type: 'info' | 'warn', text: string} | null>(null);
     
     const [mappings, setMappings] = useState<ColorMapping[]>(
         Array.from({ length: 16 }, (_, i) => ({ 
             slotIndex: i, 
             color: INITIAL_PALETTE[i].color, 
-            active: false, // 默认不勾选
+            active: false,
             textureId: INITIAL_PALETTE[i].id
         }))
     );
@@ -74,7 +73,12 @@ const App: React.FC = () => {
             for (let col = 0; col < w3e.header.width; col++) {
                 const index = row * w3e.header.width + col;
                 const corner = w3e.corners[index];
-                const color = mappings[corner.groundTexture % 16].color;
+                const slotIdx = corner.groundTexture % 16;
+                const slot = mappings[slotIdx];
+                
+                // 渲染逻辑：只有活跃且颜色被修改过才显示修改色，否则始终显示初始色
+                const color = slot.active ? slot.color : INITIAL_PALETTE[slotIdx].color;
+                
                 ctx.fillStyle = color;
                 ctx.fillRect(
                     col * cellSize, 
@@ -131,10 +135,15 @@ const App: React.FC = () => {
         const hex = "#" + ("000000" + ((pixel[0] << 16) | (pixel[1] << 8) | pixel[2]).toString(16)).slice(-6);
         
         const newMappings = [...mappings];
-        newMappings[pickingSlot] = { ...newMappings[pickingSlot], color: hex };
+        // 吸色是唯一改变颜色并激活的途径
+        newMappings[pickingSlot] = { 
+            ...newMappings[pickingSlot], 
+            color: hex, 
+            active: true 
+        };
         setMappings(newMappings);
         setPickingSlot(null);
-        showStatus(`Slot ${pickingSlot} updated`);
+        showStatus(`Slot ${pickingSlot} color updated from image`);
     };
 
     const hexToRgb = (hex: string) => {
@@ -155,11 +164,9 @@ const App: React.FC = () => {
         }));
 
         if (activeMappings.length === 0) {
-            showStatus("No active slots selected!", "warn");
+            showStatus("No modified slots active!", "warn");
             return;
         }
-
-        setLoading(true);
 
         const { width, height } = terrain.header;
         const offCanvas = document.createElement('canvas');
@@ -200,8 +207,7 @@ const App: React.FC = () => {
         }
 
         setTerrain({ ...newTerrain, corners });
-        setLoading(false);
-        showStatus("Mapped to grid");
+        showStatus("Mapping applied");
     };
 
     const handleTerrainPaint = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -241,7 +247,7 @@ const App: React.FC = () => {
             <header className="flex items-center justify-between bg-gray-900 p-4 rounded-2xl border border-white/5 shadow-2xl relative shrink-0">
                 <div className="flex flex-col">
                     <h1 className="text-xl font-black bg-gradient-to-br from-white to-gray-500 bg-clip-text text-transparent uppercase tracking-tight">W3E Texturizer Pro</h1>
-                    <p className="text-[9px] font-bold text-blue-500/60 uppercase tracking-widest">Default Palette System</p>
+                    <p className="text-[9px] font-bold text-blue-500/60 uppercase tracking-widest">Strict Palette Override</p>
                 </div>
 
                 {statusMsg && (
@@ -290,7 +296,7 @@ const App: React.FC = () => {
                 <div className="flex-1 flex gap-4 overflow-hidden min-w-0">
                     <div className="flex-1 bg-gray-900 rounded-3xl border border-white/5 shadow-inner flex flex-col overflow-hidden relative">
                         <div className="p-3 border-b border-white/5 flex justify-between items-center bg-black/20 shrink-0">
-                            <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Terrain Grid</span>
+                            <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Terrain Preview</span>
                             {terrain && <span className="text-[8px] font-mono text-gray-600">{terrain.header.width}x{terrain.header.height}</span>}
                         </div>
                         <div className="flex-1 overflow-hidden p-4 flex items-center justify-center bg-black/10">
@@ -310,7 +316,7 @@ const App: React.FC = () => {
 
                     <div className="flex-1 bg-gray-900 rounded-3xl border border-white/5 shadow-inner flex flex-col overflow-hidden relative">
                         <div className="p-3 border-b border-white/5 flex justify-between items-center bg-black/20 shrink-0">
-                            <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Ref Image</span>
+                            <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Reference Image</span>
                             {pickingSlot !== null && <span className="text-[8px] font-black text-blue-500 animate-pulse uppercase">Picking Color...</span>}
                         </div>
                         <div className="flex-1 overflow-hidden p-4 flex items-center justify-center bg-black/10">
@@ -349,28 +355,23 @@ const App: React.FC = () => {
                                         onClick={(e) => e.stopPropagation()}
                                         onChange={(e) => {
                                             const newMap = [...mappings];
-                                            newMap[i].active = e.target.checked;
+                                            const isChecked = e.target.checked;
+                                            newMap[i].active = isChecked;
+                                            // 无论勾选还是取消勾选，只要是手动操作Checkbox，都恢复原色
+                                            newMap[i].color = INITIAL_PALETTE[i].color;
                                             setMappings(newMap);
+                                            showStatus(`Slot ${i} reset to default`);
                                         }} 
                                         className="rounded border-white/10 bg-transparent text-blue-500 w-3 h-3 cursor-pointer" 
                                     />
                                     
                                     <div className="relative shrink-0">
                                         <div 
-                                            className="w-8 h-8 rounded-lg border border-white/10 shadow-inner" 
-                                            style={{ backgroundColor: m.color }}
+                                            className="w-8 h-8 rounded-lg border border-white/10 shadow-inner overflow-hidden" 
+                                            style={{ backgroundColor: m.active ? m.color : INITIAL_PALETTE[i].color }}
                                         >
-                                            <input 
-                                                type="color" 
-                                                value={m.color} 
-                                                onClick={(e) => e.stopPropagation()}
-                                                onChange={(e) => {
-                                                    const newMap = [...mappings];
-                                                    newMap[i].color = e.target.value;
-                                                    setMappings(newMap);
-                                                }}
-                                                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                                            />
+                                            {/* 颜色选择器仅用于展示，不再支持点击修改，符合"仅吸色改变"的要求 */}
+                                            <div className="w-full h-full cursor-default" />
                                         </div>
                                     </div>
 
@@ -378,7 +379,7 @@ const App: React.FC = () => {
                                         <div className="flex justify-between items-center">
                                             <span className="text-[8px] font-black text-gray-400 uppercase">Slot {i} - {INITIAL_PALETTE[i].label}</span>
                                         </div>
-                                        <span className="text-[10px] font-mono font-bold text-gray-200 truncate uppercase tracking-tighter">
+                                        <span className={`text-[10px] font-mono font-bold truncate uppercase tracking-tighter ${m.active ? 'text-blue-400' : 'text-gray-500 opacity-50'}`}>
                                             {terrain?.header.tilePalette[i] || m.textureId}
                                         </span>
                                     </div>
@@ -399,7 +400,7 @@ const App: React.FC = () => {
 
                         <div className="mt-4 pt-4 border-t border-white/5 shrink-0">
                             <div className="flex justify-between items-center mb-2">
-                                <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest">Brush: {brushSize}</span>
+                                <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest">Brush Size: {brushSize}</span>
                             </div>
                             <input type="range" min="1" max="9" step="2" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} className="w-full h-1 bg-black rounded-lg appearance-none cursor-pointer accent-blue-500" />
                         </div>
@@ -409,7 +410,7 @@ const App: React.FC = () => {
 
             <footer className="px-2 flex items-center justify-between opacity-20 shrink-0">
                 <div className="text-[7px] font-black uppercase tracking-[0.4em]">Grid: Bottom-Left Context</div>
-                <div className="text-[7px] font-black uppercase tracking-[0.4em]">V3.4 // Optimized Palette</div>
+                <div className="text-[7px] font-black uppercase tracking-[0.4em]">V3.6 // Eye-Dropper Only Mod Mode</div>
             </footer>
 
             <style>{`
