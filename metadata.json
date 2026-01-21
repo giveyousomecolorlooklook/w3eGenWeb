@@ -1,0 +1,5 @@
+{
+  "name": "W3E Terrain Texturizer",
+  "description": "A specialized tool for Warcraft III map developers to modify .w3e terrain files. Upload your file, paint ground textures directly on a visual grid, and export the modified terrain.",
+  "requestFramePermissions": []
+}
