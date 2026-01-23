@@ -38,6 +38,49 @@ export interface Corner {
 }
 
 export default class TerrainUtil {
+    static generateEmptyW3e(width: number, height: number, tileset: string = 'O'): W3E {
+        const w3e: W3E = {
+            header: {
+                fileId: "W3ER",
+                version: 11,
+                baseTileset: tileset,
+                hasCustomTileset: 0,
+                tilePaletteCount: 1,
+                tilePalette: ["Oaby"], // Default dirt for Lordaeron Summer
+                cliffTilePaletteCount: 1,
+                cliffTilePalette: ["Oclm"],
+                width: width,
+                height: height,
+                x: -Math.floor(width / 2) * 128,
+                y: -Math.floor(height / 2) * 128
+            },
+            corners: []
+        };
+
+        for (let i = 0; i < width * height; i++) {
+            const row = Math.floor(i / width);
+            const col = i % width;
+            w3e.corners.push({
+                index: i,
+                rowid: row,
+                colid: col,
+                groundHeight: 0,
+                waterHeight: 0,
+                mapEdge: 0,
+                groundTexture: 0,
+                ramp: 0,
+                water: 0,
+                blight: 0,
+                boundary: 0,
+                groundVariation: 0,
+                cliffVariation: 0,
+                cliffTexture: 0,
+                layerHeight: 2
+            });
+        }
+        return w3e;
+    }
+
     static decodeW3e(buffer: Uint8Array): W3E {
         const bitstream = new BitStream(buffer);
 
@@ -67,20 +110,17 @@ export default class TerrainUtil {
             corners: [],
         };
 
-        // 魔兽 w3e 存储顺序：从 row 0 (底部) 到 row height-1 (顶部)
-        // 每一行内：从 col 0 (左侧) 到 col width-1 (右侧)
         const totalCorners = width * height;
         for (let i = 0; i < totalCorners; i++) {
             const row = Math.floor(i / width);
             const col = i % width;
 
-            // 读取 7 字节的 Corner 数据
-            const gHeight = bitstream.readUInt16(); // 2 bytes
-            const wHeightRaw = bitstream.readUInt16(); // 2 bytes
+            const gHeight = bitstream.readUInt16();
+            const wHeightRaw = bitstream.readUInt16();
             
-            const byte4 = bitstream.readUInt8(); // Texture & Flags
-            const byte5 = bitstream.readUInt8(); // Variations
-            const byte6 = bitstream.readUInt8(); // Cliff & Layer
+            const byte4 = bitstream.readUInt8();
+            const byte5 = bitstream.readUInt8();
+            const byte6 = bitstream.readUInt8();
             
             w3e.corners.push({
                 index: i,
@@ -90,18 +130,15 @@ export default class TerrainUtil {
                 waterHeight: ((wHeightRaw & 0x3FFF) - 8192) / 4,
                 mapEdge: (wHeightRaw & 0xC000) >>> 14,
                 
-                // byte4: [boundary 1b][blight 1b][water 1b][ramp 1b][texture 4b]
                 groundTexture: byte4 & 0x0F,
                 ramp: (byte4 & 0x10) >> 4,
                 water: (byte4 & 0x20) >> 5,
                 blight: (byte4 & 0x40) >> 6,
                 boundary: (byte4 & 0x80) >> 7,
                 
-                // byte5: [cliffVar 3b][groundVar 5b]
                 groundVariation: byte5 & 0x1F,
                 cliffVariation: (byte5 & 0xE0) >> 5,
                 
-                // byte6: [layerHeight 4b][cliffTexture 4b]
                 cliffTexture: byte6 & 0x0F,
                 layerHeight: (byte6 & 0xF0) >> 4
             });

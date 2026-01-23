@@ -9,7 +9,6 @@ interface ColorMapping {
     textureId?: string;
 }
 
-// 按照用户要求的顺序设置默认颜色和对应的纹理名称
 const INITIAL_PALETTE = [
     { id: "Oaby", color: "#000000", label: "黑色" },
     { id: "Orok", color: "#1a1a1a", label: "黑色" },
@@ -29,12 +28,23 @@ const INITIAL_PALETTE = [
     { id: "Itbk", color: "#004d4d", label: "更加深的青" }
 ];
 
+const DEMO_FILES = [
+    { name: 'Tiny Map (32x32)', path: 'demos/demo_32.w3e' },
+    { name: 'Small Map (64x64)', path: 'demos/demo_64.w3e' },
+    { name: 'Medium Map (96x96)', path: 'demos/demo_96.w3e' },
+    { name: 'Large Map (128x128)', path: 'demos/demo_128.w3e' }
+];
+
 const App: React.FC = () => {
     const [terrain, setTerrain] = useState<W3E | null>(null);
     const [selectedTexture, setSelectedTexture] = useState<number>(0);
     const [brushSize, setBrushSize] = useState<number>(1);
     const [statusMsg, setStatusMsg] = useState<{type: 'info' | 'warn', text: string} | null>(null);
+    const [showDemos, setShowDemos] = useState(false);
     
+    const [lastW3eFile, setLastW3eFile] = useState<string>(() => localStorage.getItem('last_w3e_file') || 'None');
+    const [lastImageFile, setLastImageFile] = useState<string>(() => localStorage.getItem('last_image_file') || 'None');
+
     const [mappings, setMappings] = useState<ColorMapping[]>(
         Array.from({ length: 16 }, (_, i) => ({ 
             slotIndex: i, 
@@ -48,8 +58,9 @@ const App: React.FC = () => {
 
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const imageCanvasRef = useRef<HTMLCanvasElement>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const w3eInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
+    const demoDropdownRef = useRef<HTMLDivElement>(null);
     const [sourceImage, setSourceImage] = useState<HTMLImageElement | null>(null);
 
     const showStatus = (text: string, type: 'info' | 'warn' = 'info') => {
@@ -76,7 +87,6 @@ const App: React.FC = () => {
                 const slotIdx = corner.groundTexture % 16;
                 const slot = mappings[slotIdx];
                 
-                // 渲染逻辑：只有活跃且颜色被修改过才显示修改色，否则始终显示初始色
                 const color = slot.active ? slot.color : INITIAL_PALETTE[slotIdx].color;
                 
                 ctx.fillStyle = color;
@@ -105,15 +115,74 @@ const App: React.FC = () => {
         if (terrain) renderTerrain(terrain);
     }, [terrain, renderTerrain]);
 
-    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (demoDropdownRef.current && !demoDropdownRef.current.contains(event.target as Node)) {
+                setShowDemos(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleW3eFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const decoded = TerrainUtil.decodeW3e(new Uint8Array(ev.target?.result as ArrayBuffer));
+                setTerrain(decoded);
+                setLastW3eFile(file.name);
+                localStorage.setItem('last_w3e_file', file.name);
+                showStatus("Map Loaded: " + file.name);
+            } catch (err) {
+                showStatus("Failed to decode W3E", "warn");
+                console.error(err);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    };
+
+    const loadDemoW3e = async (demo: typeof DEMO_FILES[0]) => {
+        try {
+            const response = await fetch(demo.path);
+            if (!response.ok) throw new Error(`Demo file '${demo.name}' not found at ${demo.path}.`);
+            const buffer = await response.arrayBuffer();
+            const decoded = TerrainUtil.decodeW3e(new Uint8Array(buffer));
+            setTerrain(decoded);
+            setLastW3eFile(`[Demo] ${demo.name}`);
+            localStorage.setItem('last_w3e_file', `[Demo] ${demo.name}`);
+            showStatus("Demo Loaded: " + demo.name);
+            setShowDemos(false);
+        } catch (err: any) {
+            showStatus(err.message || "Failed to load demo file", "warn");
+            console.error(err);
+        }
+    };
+
+    const createBlankMap = () => {
+        const blank = TerrainUtil.generateEmptyW3e(64, 64);
+        setTerrain(blank);
+        setLastW3eFile("New 64x64 Map");
+        localStorage.setItem('last_w3e_file', "New 64x64 Map");
+        showStatus("Created New Map");
+        setShowDemos(false);
+    };
+
+    const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
         const reader = new FileReader();
         reader.onload = (event) => {
             const img = new Image();
             img.onload = () => {
                 setSourceImage(img);
-                showStatus("Image ready");
+                setLastImageFile(file.name);
+                localStorage.setItem('last_image_file', file.name);
+                showStatus("Image ready: " + file.name);
             };
             img.src = event.target?.result as string;
         };
@@ -135,7 +204,6 @@ const App: React.FC = () => {
         const hex = "#" + ("000000" + ((pixel[0] << 16) | (pixel[1] << 8) | pixel[2]).toString(16)).slice(-6);
         
         const newMappings = [...mappings];
-        // 吸色是唯一改变颜色并激活的途径
         newMappings[pickingSlot] = { 
             ...newMappings[pickingSlot], 
             color: hex, 
@@ -143,7 +211,7 @@ const App: React.FC = () => {
         };
         setMappings(newMappings);
         setPickingSlot(null);
-        showStatus(`Slot ${pickingSlot} color updated from image`);
+        showStatus(`Slot ${pickingSlot} updated from image`);
     };
 
     const hexToRgb = (hex: string) => {
@@ -244,10 +312,34 @@ const App: React.FC = () => {
 
     return (
         <div className="flex flex-col h-screen p-4 gap-4 overflow-hidden bg-gray-950 text-gray-100 font-sans">
+            <input 
+                type="file" 
+                ref={w3eInputRef} 
+                className="hidden" 
+                accept=".w3e" 
+                onChange={handleW3eFileChange} 
+            />
+            <input 
+                type="file" 
+                ref={imageInputRef} 
+                className="hidden" 
+                accept="image/*" 
+                onChange={handleImageFileChange} 
+            />
+
             <header className="flex items-center justify-between bg-gray-900 p-4 rounded-2xl border border-white/5 shadow-2xl relative shrink-0">
-                <div className="flex flex-col">
-                    <h1 className="text-xl font-black bg-gradient-to-br from-white to-gray-500 bg-clip-text text-transparent uppercase tracking-tight">W3E Texturizer Pro</h1>
-                    <p className="text-[9px] font-bold text-blue-500/60 uppercase tracking-widest">Strict Palette Override</p>
+                <div className="flex flex-col gap-1">
+                    <h1 className="text-xl font-black bg-gradient-to-br from-white to-gray-500 bg-clip-text text-transparent uppercase tracking-tight leading-tight">W3E Texturizer Pro</h1>
+                    <div className="flex gap-4">
+                        <div className="flex items-center gap-2">
+                            <span className="text-[8px] font-bold text-blue-500/60 uppercase tracking-widest">MAP:</span>
+                            <span className="text-[8px] font-mono text-gray-400 truncate max-w-[120px]">{lastW3eFile}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[8px] font-bold text-emerald-500/60 uppercase tracking-widest">IMG:</span>
+                            <span className="text-[8px] font-mono text-gray-400 truncate max-w-[120px]">{lastImageFile}</span>
+                        </div>
+                    </div>
                 </div>
 
                 {statusMsg && (
@@ -256,23 +348,48 @@ const App: React.FC = () => {
                     </div>
                 )}
 
-                <div className="flex gap-2">
-                    <input type="file" ref={fileInputRef} accept=".w3e" onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                            const reader = new FileReader();
-                            reader.onload = async (ev) => {
-                                const decoded = TerrainUtil.decodeW3e(new Uint8Array(ev.target?.result as ArrayBuffer));
-                                setTerrain(decoded);
-                                showStatus("Map Loaded");
-                            };
-                            reader.readAsArrayBuffer(file);
-                        }
-                    }} className="hidden" />
-                    <input type="file" ref={imageInputRef} accept="image/*" onChange={handleImageUpload} className="hidden" />
-                    
-                    <button onClick={() => fileInputRef.current?.click()} className="bg-white/5 hover:bg-white/10 text-gray-300 px-4 py-2 rounded-xl border border-white/5 text-[10px] font-black uppercase tracking-widest transition-all">Import W3E</button>
-                    <button onClick={() => imageInputRef.current?.click()} className="bg-white/5 hover:bg-white/10 text-gray-300 px-4 py-2 rounded-xl border border-white/5 text-[10px] font-black uppercase tracking-widest transition-all">Import PNG</button>
+                <div className="flex gap-2 relative">
+                    <div className="relative" ref={demoDropdownRef}>
+                        <button 
+                            onClick={() => setShowDemos(!showDemos)} 
+                            className="bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 px-4 py-2 rounded-xl border border-purple-500/20 text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2"
+                        >
+                            <span>W3E Demos</span>
+                            <svg className={`w-3 h-3 transition-transform ${showDemos ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7"></path></svg>
+                        </button>
+                        {showDemos && (
+                            <div className="absolute top-full left-0 mt-2 w-48 bg-gray-900 border border-white/10 rounded-xl shadow-2xl z-[100] p-1 overflow-hidden animate-in fade-in zoom-in-95">
+                                <button
+                                    onClick={createBlankMap}
+                                    className="w-full text-left px-3 py-2 text-[10px] font-black text-emerald-400 hover:text-emerald-300 hover:bg-white/5 rounded-lg transition-colors uppercase tracking-tight border-b border-white/5 mb-1"
+                                >
+                                    + Create Blank Map
+                                </button>
+                                {DEMO_FILES.map((demo) => (
+                                    <button
+                                        key={demo.path}
+                                        onClick={() => loadDemoW3e(demo)}
+                                        className="w-full text-left px-3 py-2 text-[10px] font-bold text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors uppercase tracking-tight"
+                                    >
+                                        {demo.name}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <button 
+                        onClick={() => w3eInputRef.current?.click()} 
+                        className="bg-white/5 hover:bg-white/10 text-gray-300 px-4 py-2 rounded-xl border border-white/5 text-[10px] font-black uppercase tracking-widest transition-all"
+                    >
+                        Import W3E
+                    </button>
+                    <button 
+                        onClick={() => imageInputRef.current?.click()} 
+                        className="bg-white/5 hover:bg-white/10 text-gray-300 px-4 py-2 rounded-xl border border-white/5 text-[10px] font-black uppercase tracking-widest transition-all"
+                    >
+                        Import PNG
+                    </button>
                     
                     {terrain && sourceImage && (
                         <button onClick={applyImageToTerrain} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-600/20 transition-all">Apply Mapping</button>
@@ -285,7 +402,7 @@ const App: React.FC = () => {
                             const url = URL.createObjectURL(blob);
                             const a = document.createElement('a');
                             a.href = url;
-                            a.download = 'modified.w3e';
+                            a.download = 'war3map.w3e';
                             a.click();
                         }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">Export</button>
                     )}
@@ -357,7 +474,6 @@ const App: React.FC = () => {
                                             const newMap = [...mappings];
                                             const isChecked = e.target.checked;
                                             newMap[i].active = isChecked;
-                                            // 无论勾选还是取消勾选，只要是手动操作Checkbox，都恢复原色
                                             newMap[i].color = INITIAL_PALETTE[i].color;
                                             setMappings(newMap);
                                             showStatus(`Slot ${i} reset to default`);
@@ -370,7 +486,6 @@ const App: React.FC = () => {
                                             className="w-8 h-8 rounded-lg border border-white/10 shadow-inner overflow-hidden" 
                                             style={{ backgroundColor: m.active ? m.color : INITIAL_PALETTE[i].color }}
                                         >
-                                            {/* 颜色选择器仅用于展示，不再支持点击修改，符合"仅吸色改变"的要求 */}
                                             <div className="w-full h-full cursor-default" />
                                         </div>
                                     </div>
@@ -410,7 +525,7 @@ const App: React.FC = () => {
 
             <footer className="px-2 flex items-center justify-between opacity-20 shrink-0">
                 <div className="text-[7px] font-black uppercase tracking-[0.4em]">Grid: Bottom-Left Context</div>
-                <div className="text-[7px] font-black uppercase tracking-[0.4em]">V3.6 // Eye-Dropper Only Mod Mode</div>
+                <div className="text-[7px] font-black uppercase tracking-[0.4em]">V4.2 // Demo Path Correction</div>
             </footer>
 
             <style>{`
